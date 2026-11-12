@@ -1,0 +1,47 @@
+﻿
+# ==========================
+# CREDENCIAIS E SEGREDOS
+# ==========================
+.env
+.env.*
+!.env.example
+OPENAI_API_KEY.txt
+SUPABASE_URL*.txt
+*SECRET*
+*TOKEN*
+
+# ==========================
+# AMBIENTE PYTHON
+# ==========================
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ==========================
+# CACHE E TESTES
+# ==========================
+.pytest_cache/
+.pylint.d/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ==========================
+# EDITORES
+# ==========================
+.vscode/
+.idea/
+
+# ==========================
+# LOGS
+# ==========================
+*.log
+
+# ==========================
+# SISTEMA
+# ==========================
+.DS_Store
+Thumbs.db
