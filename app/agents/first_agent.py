@@ -1,13 +1,22 @@
 ﻿
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage
+)
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END, MessagesState
-from langgraph.checkpoint.memory import InMemorySaver
 from dotenv import load_dotenv
 
 from app.memory.supabase_memory import OdinMemory
 
-load_dotenv()
+load_dotenv(override=True)
+
+
+# ==========================================
+# IDENTIDADE DO ODIN
+# ==========================================
 
 SYSTEM_PROMPT = """
 Você é ODIN, o assistente pessoal JARVIS de Bruno.
@@ -40,7 +49,10 @@ REGRAS:
 """
 
 
-# Inicialização dos componentes
+# ==========================================
+# INICIALIZAÇÃO
+# ==========================================
+
 model = ChatOpenAI(
     model="gpt-4.1-mini",
     temperature=0.3
@@ -49,8 +61,11 @@ model = ChatOpenAI(
 odin_memory = OdinMemory()
 
 
+# ==========================================
+# IDENTIFICAÇÃO DE PEDIDOS DE MEMÓRIA
+# ==========================================
+
 def is_save_request(message: str) -> bool:
-    """Identifica pedidos explícitos para guardar informações."""
 
     triggers = [
         "guarde que",
@@ -65,33 +80,44 @@ def is_save_request(message: str) -> bool:
 
     text = message.lower()
 
-    if any(term in text for term in ["não guarde", "não salve", "não registre"]):
+    if any(term in text for term in [
+        "não guarde",
+        "não salve",
+        "não registre"
+    ]):
         return False
 
     return any(trigger in text for trigger in triggers)
 
 
 def get_memory_category(message: str) -> str:
-    """Classifica a memória."""
 
     text = message.lower()
 
     if any(word in text for word in [
-        "meu nome", "sou o criador", "minha função",
+        "meu nome",
+        "sou o criador",
+        "minha função",
         "minha preferência"
     ]):
         return "identity"
 
     if any(word in text for word in [
-        "projeto", "odin", "prioridade", "desenvolvimento"
+        "projeto",
+        "odin",
+        "prioridade",
+        "desenvolvimento"
     ]):
         return "project"
 
     return "general"
 
 
+# ==========================================
+# RECUPERAÇÃO DA MEMÓRIA PERMANENTE
+# ==========================================
+
 def get_persistent_memory() -> str:
-    """Recupera memórias permanentes do Supabase."""
 
     try:
         memories = odin_memory.search_memory(limit=10)
@@ -102,6 +128,7 @@ def get_persistent_memory() -> str:
         context = []
 
         for item in memories:
+
             category = item.get("category", "general")
             content = item.get("content", "")
 
@@ -113,45 +140,76 @@ def get_persistent_memory() -> str:
         return "\n".join(context)
 
     except Exception as error:
+
         print(f"AVISO: Erro ao consultar memória: {error}")
+
         return "Memória permanente temporariamente indisponível."
 
 
-def process_message(state: MessagesState):
-    """Processa mensagens com memória de curto e longo prazo."""
+# ==========================================
+# PROCESSAMENTO PRINCIPAL
+# ==========================================
+
+def process_message(
+    state: MessagesState,
+    config: RunnableConfig
+):
+    """Processa e registra cada interação do ODIN."""
 
     latest_message = state["messages"][-1]
+
+    if not isinstance(latest_message, HumanMessage):
+        raise ValueError(
+            "A última mensagem precisa ser uma mensagem do usuário."
+        )
+
     user_message = latest_message.content
 
+    if not isinstance(user_message, str):
+        raise ValueError("Mensagem do usuário inválida.")
+
+    thread_id = config["configurable"]["thread_id"]
+
+    # 1. Registra a mensagem do Bruno
+    odin_memory.save_message(
+        thread_id=thread_id,
+        role="user",
+        content=user_message
+    )
+
+    print("ODIN: Mensagem do Bruno registrada.")
+
+    # 2. Identifica pedidos de gravação permanente
     save_status = ""
 
-    # Grava somente quando Bruno solicitar explicitamente
-    if isinstance(latest_message, HumanMessage):
-        if isinstance(user_message, str) and is_save_request(user_message):
+    if is_save_request(user_message):
 
-            try:
-                odin_memory.save_memory(
-                    content=user_message,
-                    category=get_memory_category(user_message),
-                    importance=5
-                )
+        try:
 
-                save_status = (
-                    "O pedido de gravação foi confirmado pelo Supabase. "
-                    "Você pode informar ao Bruno que a memória foi salva."
-                )
+            odin_memory.save_memory(
+                content=user_message,
+                category=get_memory_category(user_message),
+                importance=5
+            )
 
-            except Exception as error:
-                print(f"ERRO AO SALVAR MEMÓRIA: {error}")
+            save_status = (
+                "A gravação permanente foi confirmada. "
+                "Você pode informar ao Bruno que a memória foi salva."
+            )
 
-                save_status = (
-                    "A gravação da memória falhou. "
-                    "Não informe ao Bruno que a informação foi salva."
-                )
+        except Exception as error:
 
-    # Recupera a memória permanente
+            print(f"ERRO AO SALVAR MEMÓRIA: {error}")
+
+            save_status = (
+                "A gravação permanente falhou. "
+                "Não informe que a memória foi salva."
+            )
+
+    # 3. Recupera memórias permanentes
     persistent_memory = get_persistent_memory()
 
+    # 4. Monta contexto do agente
     system_context = f"""
 {SYSTEM_PROMPT}
 
@@ -170,12 +228,27 @@ Não invente memórias nem confunda informações antigas com atuais.
         *state["messages"]
     ]
 
+    # 5. Executa o modelo
     response = model.invoke(messages)
 
-    return {"messages": [response]}
+    # 6. Registra a resposta do ODIN
+    odin_memory.save_message(
+        thread_id=thread_id,
+        role="assistant",
+        content=response.content
+    )
+
+    print("ODIN: Resposta registrada no Supabase.")
+
+    return {
+        "messages": [response]
+    }
 
 
-# Construção do grafo
+# ==========================================
+# CONSTRUÇÃO DO LANGGRAPH
+# ==========================================
+
 builder = StateGraph(MessagesState)
 
 builder.add_node("assistant", process_message)
@@ -183,15 +256,73 @@ builder.add_node("assistant", process_message)
 builder.add_edge(START, "assistant")
 builder.add_edge("assistant", END)
 
-# Memória de curto prazo
-memory = InMemorySaver()
+# O histórico será recuperado diretamente do Supabase.
+# Não utilizamos checkpoint temporário neste fluxo.
 
-graph = builder.compile(checkpointer=memory)
+graph = builder.compile()
 
 
-def run_agent(message: str, thread_id: str = "bruno"):
+# ==========================================
+# RECUPERAÇÃO DO HISTÓRICO
+# ==========================================
+
+def load_conversation_history(thread_id: str):
+
+    records = odin_memory.get_messages(
+        thread_id=thread_id,
+        limit=30
+    )
+
+    history = []
+
+    for item in records:
+
+        role = item.get("role")
+        content = item.get("content", "")
+
+        if not content:
+            continue
+
+        if role == "user":
+
+            history.append(
+                HumanMessage(content=content)
+            )
+
+        elif role == "assistant":
+
+            history.append(
+                AIMessage(content=content)
+            )
+
+    return history
+
+
+# ==========================================
+# EXECUÇÃO DO AGENTE
+# ==========================================
+
+def run_agent(
+    message: str,
+    thread_id: str = "bruno"
+):
+
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("Mensagem inválida ou vazia.")
+
+    # Recupera o histórico persistente
+    history = load_conversation_history(thread_id)
+
+    # Adiciona a nova mensagem
+    history.append(
+        HumanMessage(content=message.strip())
+    )
+
+    # Executa o grafo
     result = graph.invoke(
-        {"messages": [HumanMessage(content=message)]},
+        {
+            "messages": history
+        },
         config={
             "configurable": {
                 "thread_id": thread_id
