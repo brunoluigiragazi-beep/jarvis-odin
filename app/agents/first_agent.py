@@ -1,17 +1,29 @@
 ﻿
 from langchain_openai import ChatOpenAI
+
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
     AIMessage
 )
+
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph, START, END, MessagesState
-from dotenv import load_dotenv
+
+from langgraph.graph import (
+    StateGraph,
+    START,
+    END,
+    MessagesState
+)
+
+from app.config.settings import (
+    get_openai_api_key,
+    get_model_name
+)
 
 from app.memory.supabase_memory import OdinMemory
-
-load_dotenv(override=True)
+from app.approvals.approval_manager import ApprovalManager
+from app.orchestration.orchestrator import OdinOrchestrator
 
 
 # ==========================================
@@ -46,19 +58,28 @@ REGRAS:
 - Nunca afirme que executou uma ação sem executá-la.
 - Solicite autorização antes de ações sensíveis.
 - Não afirme que salvou uma memória se o sistema não confirmou a gravação.
+- O comando /planejar inicia o planejamento de uma tarefa.
+- Nenhuma ação real deve ser considerada executada apenas por ter sido planejada.
 """
 
 
 # ==========================================
-# INICIALIZAÇÃO
+# INICIALIZAÇÃO CENTRALIZADA
 # ==========================================
 
 model = ChatOpenAI(
-    model="gpt-4.1-mini",
+    api_key=get_openai_api_key(),
+    model=get_model_name(),
     temperature=0.3
 )
 
 odin_memory = OdinMemory()
+
+odin_approval_manager = ApprovalManager()
+
+odin_orchestrator = OdinOrchestrator(
+    approval_manager=odin_approval_manager
+)
 
 
 # ==========================================
@@ -120,6 +141,7 @@ def get_memory_category(message: str) -> str:
 def get_persistent_memory() -> str:
 
     try:
+
         memories = odin_memory.search_memory(limit=10)
 
         if not memories:
@@ -141,9 +163,71 @@ def get_persistent_memory() -> str:
 
     except Exception as error:
 
-        print(f"AVISO: Erro ao consultar memória: {error}")
+        print(
+            f"AVISO: Erro ao consultar memória: {error}"
+        )
 
-        return "Memória permanente temporariamente indisponível."
+        return (
+            "Memória permanente temporariamente indisponível."
+        )
+
+
+# ==========================================
+# FORMATAÇÃO DO RESULTADO DO PLANEJAMENTO
+# ==========================================
+
+def format_plan_result(result: dict) -> str:
+
+    plan = result["plan"]
+    executions = result["executions"]
+
+    lines = [
+        f"PLANO: {plan['title']}",
+        f"OBJETIVO: {plan['objective']}",
+        "",
+        "ETAPAS:"
+    ]
+
+    for step, execution in zip(
+        plan["steps"],
+        executions
+    ):
+
+        lines.append(
+            f"{step['step_id']}. {step['description']}"
+        )
+
+        lines.append(
+            f"   Tipo: {step['action_type']}"
+        )
+
+        lines.append(
+            f"   Resultado esperado: {step['expected_result']}"
+        )
+
+        lines.append(
+            f"   Status: {execution['status']}"
+        )
+
+        if execution.get("approval_status"):
+            lines.append(
+                f"   Aprovação: {execution['approval_status']}"
+            )
+
+            lines.append(
+                f"   ID da aprovação: {execution['approval_id']}"
+            )
+
+        lines.append("")
+
+    lines.extend([
+        f"STATUS GERAL: {result['status']}",
+        "",
+        "MODO: SIMULAÇÃO",
+        "Nenhuma operação real foi executada."
+    ])
+
+    return "\n".join(lines)
 
 
 # ==========================================
@@ -171,6 +255,7 @@ def process_message(
     thread_id = config["configurable"]["thread_id"]
 
     # 1. Registra a mensagem do Bruno
+
     odin_memory.save_message(
         thread_id=thread_id,
         role="user",
@@ -179,7 +264,78 @@ def process_message(
 
     print("ODIN: Mensagem do Bruno registrada.")
 
-    # 2. Identifica pedidos de gravação permanente
+    # 2. Identifica o comando /planejar
+
+    normalized_message = user_message.strip()
+    normalized_lower = normalized_message.lower()
+
+    is_plan_command = (
+        normalized_lower == "/planejar"
+        or normalized_lower.startswith("/planejar ")
+    )
+
+    if is_plan_command:
+
+        task = normalized_message[len("/planejar"):].strip()
+
+        # 2.1 Verifica se existe uma tarefa
+
+        if not task:
+
+            response_text = (
+                "Para iniciar um planejamento, informe a tarefa.\n\n"
+                "Exemplo: /planejar Organize meus projetos."
+            )
+
+        else:
+
+            # 2.2 Aciona o orquestrador
+
+            try:
+
+                result = odin_orchestrator.run(
+                    task=task,
+                    dry_run=True,
+                    thread_id=thread_id
+                )
+
+                response_text = format_plan_result(result)
+
+                print("ODIN: Planejamento processado.")
+
+            except Exception as error:
+
+                print(
+                    f"ERRO NO ORQUESTRADOR: {error}"
+                )
+
+                response_text = (
+                    "Não consegui elaborar o planejamento. "
+                    "Verifique os registros de erro."
+                )
+
+        # 2.3 Cria e registra a resposta
+
+        response = AIMessage(content=response_text)
+
+        odin_memory.save_message(
+            thread_id=thread_id,
+            role="assistant",
+            content=response_text
+        )
+
+        print(
+            "ODIN: Resultado do planejamento registrado."
+        )
+
+        return {
+            "messages": [response]
+        }
+
+    # ======================================
+    # 3. IDENTIFICA PEDIDOS DE MEMÓRIA
+    # ======================================
+
     save_status = ""
 
     if is_save_request(user_message):
@@ -197,19 +353,31 @@ def process_message(
                 "Você pode informar ao Bruno que a memória foi salva."
             )
 
+            print(
+                "ODIN: Memória permanente registrada."
+            )
+
         except Exception as error:
 
-            print(f"ERRO AO SALVAR MEMÓRIA: {error}")
+            print(
+                f"ERRO AO SALVAR MEMÓRIA: {error}"
+            )
 
             save_status = (
                 "A gravação permanente falhou. "
                 "Não informe que a memória foi salva."
             )
 
-    # 3. Recupera memórias permanentes
+    # ======================================
+    # 4. RECUPERA MEMÓRIAS PERMANENTES
+    # ======================================
+
     persistent_memory = get_persistent_memory()
 
-    # 4. Monta contexto do agente
+    # ======================================
+    # 5. MONTA CONTEXTO DO AGENTE
+    # ======================================
+
     system_context = f"""
 {SYSTEM_PROMPT}
 
@@ -228,17 +396,30 @@ Não invente memórias nem confunda informações antigas com atuais.
         *state["messages"]
     ]
 
-    # 5. Executa o modelo
+    # ======================================
+    # 6. EXECUTA O MODELO
+    # ======================================
+
     response = model.invoke(messages)
 
-    # 6. Registra a resposta do ODIN
+    if not isinstance(response.content, str):
+        raise ValueError(
+            "O modelo retornou uma resposta em formato inesperado."
+        )
+
+    # ======================================
+    # 7. REGISTRA A RESPOSTA DO ODIN
+    # ======================================
+
     odin_memory.save_message(
         thread_id=thread_id,
         role="assistant",
         content=response.content
     )
 
-    print("ODIN: Resposta registrada no Supabase.")
+    print(
+        "ODIN: Resposta registrada no Supabase."
+    )
 
     return {
         "messages": [response]
@@ -251,13 +432,15 @@ Não invente memórias nem confunda informações antigas com atuais.
 
 builder = StateGraph(MessagesState)
 
-builder.add_node("assistant", process_message)
+builder.add_node(
+    "assistant",
+    process_message
+)
 
 builder.add_edge(START, "assistant")
 builder.add_edge("assistant", END)
 
-# O histórico será recuperado diretamente do Supabase.
-# Não utilizamos checkpoint temporário neste fluxo.
+# Histórico persistente administrado pelo Supabase.
 
 graph = builder.compile()
 
@@ -308,17 +491,25 @@ def run_agent(
 ):
 
     if not isinstance(message, str) or not message.strip():
-        raise ValueError("Mensagem inválida ou vazia.")
+        raise ValueError(
+            "Mensagem inválida ou vazia."
+        )
 
-    # Recupera o histórico persistente
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("Thread ID inválido.")
+
+    # 1. Recupera histórico persistente
+
     history = load_conversation_history(thread_id)
 
-    # Adiciona a nova mensagem
+    # 2. Adiciona a nova mensagem
+
     history.append(
         HumanMessage(content=message.strip())
     )
 
-    # Executa o grafo
+    # 3. Executa o grafo
+
     result = graph.invoke(
         {
             "messages": history

@@ -1,23 +1,19 @@
 
-import os
-from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv(override=True)
+from app.config.settings import (
+    get_supabase_url,
+    get_supabase_key
+)
 
 
 class OdinMemory:
 
     def __init__(self):
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
-
-        if not url or not key:
-            raise ValueError(
-                "Credenciais Supabase não configuradas."
-            )
-
-        self.client = create_client(url, key)
+        self.client = create_client(
+            get_supabase_url(),
+            get_supabase_key()
+        )
 
     # ==========================================
     # MEMORIA PERMANENTE
@@ -32,7 +28,7 @@ class OdinMemory:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Conteúdo vazio.")
 
-        if not 1 <= importance <= 5:
+        if not isinstance(importance, int) or not 1 <= importance <= 5:
             raise ValueError(
                 "Importância deve estar entre 1 e 5."
             )
@@ -48,6 +44,7 @@ class OdinMemory:
         return result.data
 
     def search_memory(self, category=None, limit=10):
+
         if limit < 1:
             raise ValueError("Limite inválido.")
 
@@ -76,7 +73,8 @@ class OdinMemory:
         thread_id,
         title=None
     ):
-        if not thread_id or not thread_id.strip():
+
+        if not isinstance(thread_id, str) or not thread_id.strip():
             raise ValueError("Thread ID inválido.")
 
         existing = (
@@ -112,6 +110,7 @@ class OdinMemory:
         return result.data[0]["id"]
 
     def get_conversation(self, thread_id):
+
         result = (
             self.client.table("odin_conversations")
             .select("*")
@@ -133,6 +132,7 @@ class OdinMemory:
         content,
         metadata=None
     ):
+
         if role not in ("user", "assistant"):
             raise ValueError("Papel da mensagem inválido.")
 
@@ -162,6 +162,7 @@ class OdinMemory:
     # ==========================================
 
     def get_messages(self, thread_id, limit=30):
+
         if limit < 1:
             raise ValueError("Limite inválido.")
 
@@ -179,5 +180,4 @@ class OdinMemory:
             .execute()
         )
 
-        # Retorna as mensagens em ordem cronológica
         return list(reversed(result.data or []))
