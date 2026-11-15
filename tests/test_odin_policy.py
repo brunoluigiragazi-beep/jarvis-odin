@@ -8,7 +8,17 @@ def test_analysis_is_automatic():
     result = policy.evaluate("analysis")
 
     assert result.decision == Decision.AUTO
-    assert result.approved is True
+    assert result.requires_approval is False
+    assert not hasattr(result, "approved")
+
+
+def test_read_is_automatic():
+    policy = OdinPolicy()
+
+    result = policy.evaluate("read")
+
+    assert result.decision == Decision.AUTO
+    assert result.requires_approval is False
 
 
 def test_deletion_requires_approval():
@@ -17,7 +27,7 @@ def test_deletion_requires_approval():
     result = policy.evaluate("deletion")
 
     assert result.decision == Decision.APPROVAL_REQUIRED
-    assert result.approved is False
+    assert result.requires_approval is True
 
 
 def test_unknown_action_is_blocked():
@@ -26,7 +36,7 @@ def test_unknown_action_is_blocked():
     result = policy.evaluate("unknown_action")
 
     assert result.decision == Decision.BLOCKED
-    assert result.approved is False
+    assert result.requires_approval is True
 
 
 def test_communication_requires_approval():
@@ -34,5 +44,14 @@ def test_communication_requires_approval():
 
     result = policy.evaluate("communication")
 
+    assert result.decision == Decision.APPROVAL_REQUIRED
     assert result.requires_approval is True
-    assert result.approved is False
+
+
+def test_action_type_is_normalized():
+    policy = OdinPolicy()
+
+    result = policy.evaluate("  ANALYSIS  ")
+
+    assert result.action_type == "analysis"
+    assert result.decision == Decision.AUTO

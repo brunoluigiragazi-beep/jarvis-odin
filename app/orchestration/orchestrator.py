@@ -52,7 +52,7 @@ class OdinOrchestrator:
             result = self.executor.execute(
                 step=step,
                 dry_run=dry_run,
-                approved=False
+                thread_id=thread_id
             )
 
             execution = result.model_dump(mode="json")
@@ -71,6 +71,12 @@ class OdinOrchestrator:
                         "expected_result": step.expected_result
                     }
                 )
+
+                if not isinstance(approval, dict):
+                    raise RuntimeError(
+                        "O Approval Manager não retornou "
+                        "um registro de aprovação válido."
+                    )
 
                 execution["approval_id"] = approval["id"]
                 execution["approval_status"] = approval["status"]
@@ -95,6 +101,80 @@ class OdinOrchestrator:
             "executions": results,
             "status": overall_status
         }
+
+    def resume_approved_step(
+        self,
+        step,
+        execution_id,
+        thread_id,
+        dry_run=True
+    ):
+        """
+        Retoma uma etapa somente após reivindicar uma
+        aprovação válida no banco de dados.
+        """
+
+        if self.approval_manager is None:
+            raise RuntimeError(
+                "Approval Manager não configurado."
+            )
+
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise ValueError("Thread ID inválido.")
+
+        if not hasattr(step, "step_id"):
+            raise ValueError("Etapa inválida.")
+
+        if not hasattr(step, "action_type"):
+            raise ValueError("Tipo de ação inválido.")
+
+        authorization = self.approval_manager.claim_approval(
+            execution_id=execution_id,
+            thread_id=thread_id.strip(),
+            step_id=step.step_id,
+            action_type=step.action_type
+        )
+
+        if not isinstance(authorization, dict):
+            return {
+                "status": "waiting_approval",
+                "executed": False,
+                "message": (
+                    "Nenhuma aprovação válida disponível "
+                    "para esta execução."
+                )
+            }
+
+        # Confere se o registro retornado pertence
+        # exatamente à execução e à etapa solicitadas.
+
+        valid_authorization = (
+            str(authorization.get("execution_id")) == str(execution_id)
+            and authorization.get("thread_id") == thread_id.strip()
+            and authorization.get("step_id") == step.step_id
+            and authorization.get("action_type") == step.action_type
+            and authorization.get("status") == "executing"
+        )
+
+        if not valid_authorization:
+            return {
+                "status": "blocked",
+                "executed": False,
+                "message": (
+                    "O registro de aprovação não corresponde "
+                    "à execução solicitada."
+                )
+            }
+
+        result = self.executor.execute(
+            step=step,
+            dry_run=dry_run,
+            execution_id=execution_id,
+            thread_id=thread_id.strip(),
+            authorization=authorization
+        )
+
+        return result.model_dump(mode="json")
 
     def _build_graph(self):
         builder = StateGraph(OdinState)

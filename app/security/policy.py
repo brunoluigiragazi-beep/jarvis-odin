@@ -3,31 +3,18 @@ from enum import Enum
 from pydantic import BaseModel
 
 
-# ==========================================
-# TIPOS DE DECISÃO
-# ==========================================
-
 class Decision(str, Enum):
     AUTO = "auto"
     APPROVAL_REQUIRED = "approval_required"
     BLOCKED = "blocked"
 
 
-# ==========================================
-# RESULTADO DA POLÍTICA
-# ==========================================
-
 class PolicyResult(BaseModel):
     action_type: str
     decision: Decision
-    approved: bool
     requires_approval: bool
     reason: str
 
-
-# ==========================================
-# ODIN POLICY ENGINE
-# ==========================================
 
 class OdinPolicy:
 
@@ -53,29 +40,24 @@ class OdinPolicy:
         action_type = action_type.strip().lower()
 
         if action_type in self.AUTO_ACTIONS:
-
             return PolicyResult(
                 action_type=action_type,
                 decision=Decision.AUTO,
-                approved=True,
                 requires_approval=False,
-                reason="Ação permitida automaticamente."
+                reason="Ação permitida pela política automática."
             )
 
         if action_type in self.APPROVAL_ACTIONS:
-
             return PolicyResult(
                 action_type=action_type,
                 decision=Decision.APPROVAL_REQUIRED,
-                approved=False,
                 requires_approval=True,
-                reason="Aguardando autorização explícita de Bruno."
+                reason="Ação exige autorização humana explícita."
             )
 
         return PolicyResult(
             action_type=action_type or "unknown",
             decision=Decision.BLOCKED,
-            approved=False,
             requires_approval=True,
             reason="Tipo de ação desconhecido. Execução bloqueada."
         )

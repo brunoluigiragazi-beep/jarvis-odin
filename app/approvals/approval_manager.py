@@ -1,5 +1,4 @@
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from supabase import create_client
@@ -8,6 +7,7 @@ from app.config.settings import (
     get_supabase_url,
     get_supabase_key
 )
+
 from app.audit.audit_manager import AuditManager
 
 
@@ -46,6 +46,7 @@ class ApprovalManager:
                 actor=actor,
                 details=details
             )
+
         except Exception as error:
             raise RuntimeError(
                 "A operação foi registrada, mas houve falha "
@@ -75,7 +76,7 @@ class ApprovalManager:
                 )
 
         try:
-            UUID(execution_id)
+            execution_id = str(UUID(execution_id))
         except (ValueError, TypeError, AttributeError):
             raise ValueError(
                 "ID da execução deve ser um UUID válido."
@@ -91,8 +92,12 @@ class ApprovalManager:
         if parameters is not None and not isinstance(parameters, dict):
             raise ValueError("Parâmetros inválidos.")
 
+        thread_id = thread_id.strip()
+        action_type = action_type.strip()
+
         existing = (
-            self.client.table("odin_approvals")
+            self.client
+            .table("odin_approvals")
             .select("id,status")
             .eq("execution_id", execution_id)
             .limit(1)
@@ -105,12 +110,13 @@ class ApprovalManager:
             )
 
         result = (
-            self.client.table("odin_approvals")
+            self.client
+            .table("odin_approvals")
             .insert({
                 "execution_id": execution_id,
-                "thread_id": thread_id.strip(),
+                "thread_id": thread_id,
                 "step_id": step_id,
-                "action_type": action_type.strip(),
+                "action_type": action_type,
                 "description": description.strip(),
                 "parameters": parameters or {},
                 "status": "pending"
@@ -128,17 +134,18 @@ class ApprovalManager:
         self._record_audit(
             event_type="approval_requested",
             execution_id=execution_id,
-            thread_id=thread_id.strip(),
+            thread_id=thread_id,
             actor="ODIN",
             details={
                 "step_id": step_id,
-                "action_type": action_type.strip()
+                "action_type": action_type
             }
         )
 
         return approval
 
     def get_pending(self, thread_id=None, limit=20):
+
         if (
             not isinstance(limit, int)
             or isinstance(limit, bool)
@@ -147,51 +154,70 @@ class ApprovalManager:
             raise ValueError("Limite inválido.")
 
         query = (
-            self.client.table("odin_approvals")
+            self.client
+            .table("odin_approvals")
             .select("*")
             .eq("status", "pending")
         )
 
         if thread_id is not None:
+
             if not isinstance(thread_id, str) or not thread_id.strip():
                 raise ValueError("Thread ID inválido.")
 
             query = query.eq("thread_id", thread_id.strip())
 
         result = (
-            query.order("requested_at", desc=True)
+            query
+            .order("requested_at", desc=True)
             .limit(limit)
             .execute()
         )
 
         return result.data or []
 
-    def decide(self, execution_id, decision, decision_by):
+    def decide(
+        self,
+        execution_id,
+        decision,
+        decision_by
+    ):
+        """
+        Aprova ou rejeita uma solicitação.
+
+        A atualização do status e o registro da auditoria
+        são executados atomicamente pela função PostgreSQL
+        odin_decide_approval_v2.
+        """
+
         try:
-            UUID(execution_id)
+            execution_id = str(UUID(str(execution_id)))
         except (ValueError, TypeError, AttributeError):
-            raise ValueError("ID da execução inválido.")
+            raise ValueError(
+                "ID da execução inválido."
+            )
 
         if decision not in ("approved", "rejected"):
             raise ValueError("Decisão inválida.")
 
-        if not isinstance(decision_by, str) or not decision_by.strip():
+        if (
+            not isinstance(decision_by, str)
+            or not decision_by.strip()
+        ):
             raise ValueError(
                 "Responsável pela decisão inválido."
             )
 
-        decided_at = datetime.now(timezone.utc).isoformat()
-
         result = (
-            self.client.table("odin_approvals")
-            .update({
-                "status": decision,
-                "decision_by": decision_by.strip(),
-                "decided_at": decided_at
-            })
-            .eq("execution_id", execution_id)
-            .eq("status", "pending")
-            .select("*")
+            self.client
+            .rpc(
+                "odin_decide_approval_v2",
+                {
+                    "p_execution_id": execution_id,
+                    "p_decision": decision,
+                    "p_decision_by": decision_by.strip()
+                }
+            )
             .execute()
         )
 
@@ -200,46 +226,58 @@ class ApprovalManager:
                 "Solicitação inexistente ou já processada."
             )
 
-        approval = result.data[0]
+        return result.data[0]
 
-        event_type = (
-            "approval_approved"
-            if decision == "approved"
-            else "approval_rejected"
-        )
-
-        self._record_audit(
-            event_type=event_type,
-            execution_id=execution_id,
-            thread_id=approval.get("thread_id"),
-            actor=decision_by.strip(),
-            details={
-                "decision": decision
-            }
-        )
-
-        return approval
-
-    def claim_approval(self, execution_id):
+    def claim_approval(
+        self,
+        execution_id,
+        thread_id,
+        step_id,
+        action_type
+    ):
         """
         Reserva atomicamente uma aprovação concedida.
 
-        Retorna o registro quando a reserva é realizada.
-        Retorna None quando a aprovação não existe,
-        não está aprovada ou já foi consumida.
+        A função PostgreSQL odin_claim_approval_v2 valida
+        os identificadores, atualiza o status para executing
+        e registra o evento de auditoria na mesma transação.
         """
 
         try:
-            UUID(execution_id)
+            execution_id = str(UUID(str(execution_id)))
         except (ValueError, TypeError, AttributeError):
-            raise ValueError("ID da execução inválido.")
+            raise ValueError(
+                "ID da execução inválido."
+            )
+
+        if (
+            not isinstance(thread_id, str)
+            or not thread_id.strip()
+        ):
+            raise ValueError("Thread ID inválido.")
+
+        if (
+            not isinstance(step_id, int)
+            or isinstance(step_id, bool)
+            or step_id < 1
+        ):
+            raise ValueError("ID da etapa inválido.")
+
+        if (
+            not isinstance(action_type, str)
+            or not action_type.strip()
+        ):
+            raise ValueError("Tipo de ação inválido.")
 
         result = (
             self.client
             .rpc(
-                "odin_claim_approval",
+                "odin_claim_approval_v2",
                 {
-                    "p_execution_id": execution_id
+                    "p_execution_id": execution_id,
+                    "p_thread_id": thread_id.strip(),
+                    "p_step_id": step_id,
+                    "p_action_type": action_type.strip()
                 }
             )
             .execute()
@@ -248,18 +286,4 @@ class ApprovalManager:
         if not result.data:
             return None
 
-        approval = result.data[0]
-
-        self._record_audit(
-            event_type="approval_claimed",
-            execution_id=execution_id,
-            thread_id=approval.get("thread_id"),
-            actor="ODIN",
-            details={
-                "step_id": approval.get("step_id"),
-                "action_type": approval.get("action_type"),
-                "status": "executing"
-            }
-        )
-
-        return approval
+        return result.data[0]

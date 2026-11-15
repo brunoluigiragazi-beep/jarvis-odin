@@ -1,5 +1,4 @@
 
-from datetime import datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -19,15 +18,17 @@ def manager():
     table.limit.return_value = table
     table.order.return_value = table
     table.insert.return_value = table
-    table.update.return_value = table
 
     instance.client = MagicMock()
     instance.client.table.return_value = table
-
     instance.mock_table = table
 
     return instance
 
+
+# ==========================================
+# TESTES DE SOLICITAÇÃO DE APROVAÇÃO
+# ==========================================
 
 def test_rejects_incomplete_approval(manager):
     with pytest.raises(ValueError):
@@ -60,24 +61,6 @@ def test_rejects_invalid_parameters(manager):
             action_type="deletion",
             description="Excluir dados",
             parameters="inválido"
-        )
-
-
-def test_rejects_invalid_decision(manager):
-    with pytest.raises(ValueError):
-        manager.decide(
-            execution_id=str(uuid4()),
-            decision="executed",
-            decision_by="Bruno"
-        )
-
-
-def test_rejects_empty_decision_by(manager):
-    with pytest.raises(ValueError):
-        manager.decide(
-            execution_id=str(uuid4()),
-            decision="approved",
-            decision_by=" "
         )
 
 
@@ -131,20 +114,56 @@ def test_rejects_duplicate_approval(manager):
     manager.mock_table.insert.assert_not_called()
 
 
+# ==========================================
+# TESTES DE CONSULTA DE APROVAÇÕES
+# ==========================================
+
 def test_lists_pending_approvals(manager):
     pending = [
         {"execution_id": str(uuid4()), "status": "pending"},
         {"execution_id": str(uuid4()), "status": "pending"}
     ]
 
-    manager.mock_table.execute.return_value = MagicMock(data=pending)
+    manager.mock_table.execute.return_value = MagicMock(
+        data=pending
+    )
 
-    result = manager.get_pending(thread_id="thread-123", limit=10)
+    result = manager.get_pending(
+        thread_id="thread-123",
+        limit=10
+    )
 
     assert result == pending
+
     manager.mock_table.eq.assert_any_call("status", "pending")
     manager.mock_table.eq.assert_any_call("thread_id", "thread-123")
     manager.mock_table.limit.assert_called_once_with(10)
+
+
+# ==========================================
+# TESTES DE DECISÃO ATÔMICA
+# ==========================================
+
+def test_rejects_invalid_decision(manager):
+    with pytest.raises(ValueError):
+        manager.decide(
+            execution_id=str(uuid4()),
+            decision="executed",
+            decision_by="Bruno"
+        )
+
+    manager.client.rpc.assert_not_called()
+
+
+def test_rejects_empty_decision_by(manager):
+    with pytest.raises(ValueError):
+        manager.decide(
+            execution_id=str(uuid4()),
+            decision="approved",
+            decision_by=" "
+        )
+
+    manager.client.rpc.assert_not_called()
 
 
 def test_approves_pending_execution(manager):
@@ -156,7 +175,9 @@ def test_approves_pending_execution(manager):
         "decision_by": "Bruno"
     }
 
-    manager.mock_table.execute.return_value = MagicMock(data=[approved])
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
+        data=[approved]
+    )
 
     result = manager.decide(
         execution_id=execution_id,
@@ -164,21 +185,55 @@ def test_approves_pending_execution(manager):
         decision_by="Bruno"
     )
 
-    assert result["status"] == "approved"
+    assert result == approved
 
-    update_data = manager.mock_table.update.call_args.args[0]
+    manager.client.rpc.assert_called_once_with(
+        "odin_decide_approval_v2",
+        {
+            "p_execution_id": execution_id,
+            "p_decision": "approved",
+            "p_decision_by": "Bruno"
+        }
+    )
 
-    assert update_data["status"] == "approved"
-    assert update_data["decision_by"] == "Bruno"
 
-    timestamp = datetime.fromisoformat(update_data["decided_at"])
-    assert timestamp.tzinfo is not None
+def test_rejects_pending_execution(manager):
+    execution_id = str(uuid4())
+
+    rejected = {
+        "execution_id": execution_id,
+        "status": "rejected",
+        "decision_by": "Bruno"
+    }
+
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
+        data=[rejected]
+    )
+
+    result = manager.decide(
+        execution_id=execution_id,
+        decision="rejected",
+        decision_by="Bruno"
+    )
+
+    assert result == rejected
+
+    manager.client.rpc.assert_called_once_with(
+        "odin_decide_approval_v2",
+        {
+            "p_execution_id": execution_id,
+            "p_decision": "rejected",
+            "p_decision_by": "Bruno"
+        }
+    )
 
 
 def test_rejects_already_processed_approval(manager):
     execution_id = str(uuid4())
 
-    manager.mock_table.execute.return_value = MagicMock(data=[])
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
 
     with pytest.raises(ValueError):
         manager.decide(
@@ -186,6 +241,22 @@ def test_rejects_already_processed_approval(manager):
             decision="approved",
             decision_by="Bruno"
         )
+
+
+def test_decide_rejects_invalid_uuid(manager):
+    with pytest.raises(ValueError):
+        manager.decide(
+            execution_id="uuid-invalido",
+            decision="approved",
+            decision_by="Bruno"
+        )
+
+    manager.client.rpc.assert_not_called()
+
+
+# ==========================================
+# TESTES DE RESERVA DE APROVAÇÃO
+# ==========================================
 
 def test_claims_approved_execution(manager):
     execution_id = str(uuid4())
@@ -202,13 +273,23 @@ def test_claims_approved_execution(manager):
         data=[approval]
     )
 
-    result = manager.claim_approval(execution_id)
+    result = manager.claim_approval(
+        execution_id=execution_id,
+        thread_id="thread-123",
+        step_id=1,
+        action_type="deletion"
+    )
 
     assert result == approval
 
     manager.client.rpc.assert_called_once_with(
-        "odin_claim_approval",
-        {"p_execution_id": execution_id}
+        "odin_claim_approval_v2",
+        {
+            "p_execution_id": execution_id,
+            "p_thread_id": "thread-123",
+            "p_step_id": 1,
+            "p_action_type": "deletion"
+        }
     )
 
 
@@ -219,14 +300,62 @@ def test_claim_returns_none_when_not_available(manager):
         data=[]
     )
 
-    result = manager.claim_approval(execution_id)
+    result = manager.claim_approval(
+        execution_id=execution_id,
+        thread_id="thread-123",
+        step_id=1,
+        action_type="deletion"
+    )
 
     assert result is None
 
 
 def test_claim_rejects_invalid_uuid(manager):
     with pytest.raises(ValueError):
-        manager.claim_approval("uuid-invalido")
+        manager.claim_approval(
+            execution_id="uuid-invalido",
+            thread_id="thread-123",
+            step_id=1,
+            action_type="deletion"
+        )
+
+    manager.client.rpc.assert_not_called()
+
+
+def test_claim_rejects_invalid_step_id(manager):
+    with pytest.raises(ValueError):
+        manager.claim_approval(
+            execution_id=str(uuid4()),
+            thread_id="thread-123",
+            step_id=True,
+            action_type="deletion"
+        )
+
+    manager.client.rpc.assert_not_called()
+
+
+def test_claim_rejects_empty_thread_id(manager):
+    with pytest.raises(ValueError):
+        manager.claim_approval(
+            execution_id=str(uuid4()),
+            thread_id=" ",
+            step_id=1,
+            action_type="deletion"
+        )
+
+    manager.client.rpc.assert_not_called()
+
+
+def test_claim_rejects_empty_action_type(manager):
+    with pytest.raises(ValueError):
+        manager.claim_approval(
+            execution_id=str(uuid4()),
+            thread_id="thread-123",
+            step_id=1,
+            action_type=" "
+        )
+
+    manager.client.rpc.assert_not_called()
 
 
 def test_claim_cannot_be_reused(manager):
@@ -234,18 +363,33 @@ def test_claim_cannot_be_reused(manager):
 
     approval = {
         "execution_id": execution_id,
+        "thread_id": "thread-123",
+        "step_id": 1,
+        "action_type": "deletion",
         "status": "executing"
     }
 
-    rpc_result = manager.client.rpc.return_value.execute
+    rpc_execute = manager.client.rpc.return_value.execute
 
-    rpc_result.side_effect = [
+    rpc_execute.side_effect = [
         MagicMock(data=[approval]),
         MagicMock(data=[])
     ]
 
-    first_result = manager.claim_approval(execution_id)
-    second_result = manager.claim_approval(execution_id)
+    first_result = manager.claim_approval(
+        execution_id=execution_id,
+        thread_id="thread-123",
+        step_id=1,
+        action_type="deletion"
+    )
+
+    second_result = manager.claim_approval(
+        execution_id=execution_id,
+        thread_id="thread-123",
+        step_id=1,
+        action_type="deletion"
+    )
 
     assert first_result == approval
     assert second_result is None
+    assert manager.client.rpc.call_count == 2

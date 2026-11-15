@@ -17,7 +17,6 @@ def manager():
     table.eq.return_value = table
     table.limit.return_value = table
     table.insert.return_value = table
-    table.update.return_value = table
 
     instance.client = MagicMock()
     instance.client.table.return_value = table
@@ -59,7 +58,7 @@ def test_audit_approval_requested(manager):
     assert event["thread_id"] == "thread-123"
 
 
-def test_audit_approval_approved(manager):
+def test_audit_approval_approved_is_recorded_by_database(manager):
     execution_id = str(uuid4())
 
     approval = {
@@ -68,25 +67,33 @@ def test_audit_approval_approved(manager):
         "status": "approved"
     }
 
-    manager.mock_table.execute.return_value = MagicMock(
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
         data=[approval]
     )
 
-    manager.decide(
+    result = manager.decide(
         execution_id=execution_id,
         decision="approved",
         decision_by="Bruno"
     )
 
-    manager.audit_manager.log_event.assert_called_once()
+    assert result == approval
 
-    event = manager.audit_manager.log_event.call_args.kwargs
+    manager.client.rpc.assert_called_once_with(
+        "odin_decide_approval_v2",
+        {
+            "p_execution_id": execution_id,
+            "p_decision": "approved",
+            "p_decision_by": "Bruno"
+        }
+    )
 
-    assert event["event_type"] == "approval_approved"
-    assert event["execution_id"] == execution_id
+    # A auditoria é gravada dentro da transação PostgreSQL.
+    # O Python não deve registrar um segundo evento.
+    manager.audit_manager.log_event.assert_not_called()
 
 
-def test_audit_approval_rejected(manager):
+def test_audit_approval_rejected_is_recorded_by_database(manager):
     execution_id = str(uuid4())
 
     approval = {
@@ -95,22 +102,28 @@ def test_audit_approval_rejected(manager):
         "status": "rejected"
     }
 
-    manager.mock_table.execute.return_value = MagicMock(
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
         data=[approval]
     )
 
-    manager.decide(
+    result = manager.decide(
         execution_id=execution_id,
         decision="rejected",
         decision_by="Bruno"
     )
 
-    manager.audit_manager.log_event.assert_called_once()
+    assert result == approval
 
-    event = manager.audit_manager.log_event.call_args.kwargs
+    manager.client.rpc.assert_called_once_with(
+        "odin_decide_approval_v2",
+        {
+            "p_execution_id": execution_id,
+            "p_decision": "rejected",
+            "p_decision_by": "Bruno"
+        }
+    )
 
-    assert event["event_type"] == "approval_rejected"
-    assert event["execution_id"] == execution_id
+    manager.audit_manager.log_event.assert_not_called()
 
 
 def test_audit_failure_is_reported(manager):

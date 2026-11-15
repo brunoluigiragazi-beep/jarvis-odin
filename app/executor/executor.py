@@ -1,15 +1,11 @@
 
 from enum import Enum
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
 from app.security.policy import OdinPolicy, Decision
 
-
-# ==========================================
-# ESTADOS DE EXECUÇÃO
-# ==========================================
 
 class ExecutionStatus(str, Enum):
     DRY_RUN = "dry_run"
@@ -17,10 +13,6 @@ class ExecutionStatus(str, Enum):
     BLOCKED = "blocked"
     EXECUTED = "executed"
 
-
-# ==========================================
-# RESULTADO
-# ==========================================
 
 class ExecutionResult(BaseModel):
     execution_id: str
@@ -30,70 +22,100 @@ class ExecutionResult(BaseModel):
     executed: bool = False
 
 
-# ==========================================
-# ODIN EXECUTOR
-# ==========================================
-
 class OdinExecutor:
 
     def __init__(self):
         self.policy = OdinPolicy()
 
+    @staticmethod
+    def _validate_execution_id(execution_id):
+        try:
+            return str(UUID(str(execution_id)))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("ID da execução inválido.")
+
+    @staticmethod
+    def _validate_authorization(
+        authorization,
+        execution_id,
+        thread_id,
+        step
+    ):
+        if not isinstance(authorization, dict):
+            return False
+
+        return (
+            authorization.get("execution_id") == execution_id
+            and authorization.get("thread_id") == thread_id
+            and authorization.get("step_id") == step.step_id
+            and authorization.get("action_type") == step.action_type
+            and authorization.get("status") == "executing"
+        )
+
     def execute(
         self,
         step,
         dry_run=True,
-        approved=False
-    ) -> ExecutionResult:
+        execution_id=None,
+        thread_id=None,
+        authorization=None
+    ):
+
+        if execution_id is None:
+            execution_id = str(uuid4())
+        else:
+            execution_id = self._validate_execution_id(
+                execution_id
+            )
 
         action_type = step.action_type
-        execution_id = str(uuid4())
 
-        # 1. Verificar política de segurança
         permission = self.policy.evaluate(action_type)
 
-        # 2. Bloquear ações desconhecidas
         if permission.decision == Decision.BLOCKED:
-
             return ExecutionResult(
                 execution_id=execution_id,
-                action_type=action_type,
+                action_type=permission.action_type,
                 status=ExecutionStatus.BLOCKED,
                 message=permission.reason
             )
 
-        # 3. Exigir aprovação explícita
-        if permission.requires_approval and not approved:
-
-            return ExecutionResult(
+        if permission.requires_approval:
+            valid_authorization = self._validate_authorization(
+                authorization=authorization,
                 execution_id=execution_id,
-                action_type=action_type,
-                status=ExecutionStatus.WAITING_APPROVAL,
-                message=(
-                    "Ação aguardando autorização explícita de Bruno."
-                )
+                thread_id=thread_id,
+                step=step
             )
 
-        # 4. Modo de simulação
-        if dry_run:
+            if not valid_authorization:
+                return ExecutionResult(
+                    execution_id=execution_id,
+                    action_type=permission.action_type,
+                    status=ExecutionStatus.WAITING_APPROVAL,
+                    message=(
+                        "Ação aguardando autorização válida "
+                        "e vinculada à execução."
+                    )
+                )
 
+        if dry_run:
             return ExecutionResult(
                 execution_id=execution_id,
-                action_type=action_type,
+                action_type=permission.action_type,
                 status=ExecutionStatus.DRY_RUN,
                 message=(
-                    "Ação autorizada para simulação. "
+                    "Autorização validada para simulação. "
                     "Nenhuma operação real foi executada."
                 )
             )
 
-        # 5. Bloquear execução real sem ferramenta registrada
         return ExecutionResult(
             execution_id=execution_id,
-            action_type=action_type,
+            action_type=permission.action_type,
             status=ExecutionStatus.BLOCKED,
             message=(
-                "Nenhuma ferramenta de execução real "
-                "foi registrada para esta ação."
+                "Execução real bloqueada. "
+                "Nenhuma ferramenta de execução foi registrada."
             )
         )
