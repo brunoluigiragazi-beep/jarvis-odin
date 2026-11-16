@@ -61,15 +61,17 @@ class OdinOrchestrator:
                 execution["status"] == "waiting_approval"
                 and self.approval_manager is not None
             ):
+                approval_parameters = {
+                    "expected_result": step.expected_result
+                }
+
                 approval = self.approval_manager.request_approval(
                     execution_id=execution["execution_id"],
                     thread_id=thread_id,
                     step_id=step.step_id,
                     action_type=step.action_type,
                     description=step.description,
-                    parameters={
-                        "expected_result": step.expected_result
-                    }
+                    parameters=approval_parameters
                 )
 
                 if not isinstance(approval, dict):
@@ -112,6 +114,10 @@ class OdinOrchestrator:
         """
         Retoma uma etapa somente após reivindicar uma
         aprovação válida no banco de dados.
+
+        A descrição e os parâmetros devem ser idênticos
+        aos utilizados na solicitação original, permitindo
+        recalcular e validar a assinatura HMAC.
         """
 
         if self.approval_manager is None:
@@ -128,11 +134,27 @@ class OdinOrchestrator:
         if not hasattr(step, "action_type"):
             raise ValueError("Tipo de ação inválido.")
 
+        if not hasattr(step, "description"):
+            raise ValueError("Descrição da ação inválida.")
+
+        if not hasattr(step, "expected_result"):
+            raise ValueError("Resultado esperado da ação inválido.")
+
+        thread_id = thread_id.strip()
+
+        approval_parameters = {
+            "expected_result": step.expected_result
+        }
+
+        # Reivindica a aprovação enviando os mesmos dados
+        # utilizados na criação da solicitação.
         authorization = self.approval_manager.claim_approval(
             execution_id=execution_id,
-            thread_id=thread_id.strip(),
+            thread_id=thread_id,
             step_id=step.step_id,
-            action_type=step.action_type
+            action_type=step.action_type,
+            description=step.description,
+            parameters=approval_parameters
         )
 
         if not isinstance(authorization, dict):
@@ -147,13 +169,15 @@ class OdinOrchestrator:
 
         # Confere se o registro retornado pertence
         # exatamente à execução e à etapa solicitadas.
-
         valid_authorization = (
             str(authorization.get("execution_id")) == str(execution_id)
-            and authorization.get("thread_id") == thread_id.strip()
+            and authorization.get("thread_id") == thread_id
             and authorization.get("step_id") == step.step_id
             and authorization.get("action_type") == step.action_type
+            and authorization.get("description") == step.description
+            and authorization.get("parameters") == approval_parameters
             and authorization.get("status") == "executing"
+            and bool(authorization.get("action_hash"))
         )
 
         if not valid_authorization:
@@ -166,11 +190,13 @@ class OdinOrchestrator:
                 )
             }
 
+        # O Executor continua responsável por aplicar
+        # as políticas de segurança e execução.
         result = self.executor.execute(
             step=step,
             dry_run=dry_run,
             execution_id=execution_id,
-            thread_id=thread_id.strip(),
+            thread_id=thread_id,
             authorization=authorization
         )
 

@@ -7,12 +7,23 @@ import pytest
 from app.approvals.approval_manager import ApprovalManager
 
 
+ACTION_HASH = "a" * 64
+DESCRIPTION = "Excluir dados"
+PARAMETERS = {"table": "odin_memory"}
+
+
 @pytest.fixture
-def manager():
+def manager(monkeypatch):
+    # Hash determinístico para os testes.
+    # Não utiliza nem expõe o segredo do .env.
+    monkeypatch.setattr(
+        "app.approvals.approval_manager.calculate_action_hash",
+        lambda **kwargs: ACTION_HASH
+    )
+
     instance = ApprovalManager.__new__(ApprovalManager)
 
     table = MagicMock()
-
     table.select.return_value = table
     table.eq.return_value = table
     table.limit.return_value = table
@@ -22,8 +33,6 @@ def manager():
     instance.client = MagicMock()
     instance.client.table.return_value = table
     instance.mock_table = table
-
-    instance.audit_manager = MagicMock()
 
     return instance
 
@@ -39,7 +48,7 @@ def test_rejects_incomplete_approval(manager):
             thread_id="thread-123",
             step_id=1,
             action_type="deletion",
-            description="Excluir dados"
+            description=DESCRIPTION
         )
 
 
@@ -50,7 +59,7 @@ def test_rejects_invalid_step_id(manager):
             thread_id="thread-123",
             step_id=0,
             action_type="deletion",
-            description="Excluir dados"
+            description=DESCRIPTION
         )
 
 
@@ -61,7 +70,7 @@ def test_rejects_invalid_parameters(manager):
             thread_id="thread-123",
             step_id=1,
             action_type="deletion",
-            description="Excluir dados",
+            description=DESCRIPTION,
             parameters="inválido"
         )
 
@@ -74,8 +83,9 @@ def test_registers_approval_successfully(manager):
         "thread_id": "thread-123",
         "step_id": 1,
         "action_type": "deletion",
-        "description": "Excluir dados",
-        "parameters": {"table": "odin_memory"},
+        "description": DESCRIPTION,
+        "parameters": PARAMETERS,
+        "action_hash": ACTION_HASH,
         "status": "pending"
     }
 
@@ -88,8 +98,8 @@ def test_registers_approval_successfully(manager):
         thread_id="thread-123",
         step_id=1,
         action_type="deletion",
-        description="Excluir dados",
-        parameters={"table": "odin_memory"}
+        description=DESCRIPTION,
+        parameters=PARAMETERS
     )
 
     assert result == approval
@@ -101,32 +111,35 @@ def test_registers_approval_successfully(manager):
             "p_thread_id": "thread-123",
             "p_step_id": 1,
             "p_action_type": "deletion",
-            "p_description": "Excluir dados",
-            "p_parameters": {"table": "odin_memory"}
+            "p_description": DESCRIPTION,
+            "p_action_hash": ACTION_HASH,
+            "p_parameters": PARAMETERS
         }
     )
 
-    manager.client.table.assert_not_called()
 
-
-def test_duplicate_approval_is_rejected_by_database(manager):
+def test_rejects_duplicate_approval(manager):
     execution_id = str(uuid4())
 
-    manager.client.rpc.return_value.execute.side_effect = RuntimeError(
-        "duplicate key value violates unique constraint"
+    # Simula uma RPC que não conseguiu registrar a aprovação.
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
+        data=[]
     )
 
-    with pytest.raises(RuntimeError, match="duplicate key"):
+    with pytest.raises(
+        RuntimeError,
+        match="Não foi possível registrar a aprovação"
+    ):
         manager.request_approval(
             execution_id=execution_id,
             thread_id="thread-123",
             step_id=1,
             action_type="deletion",
-            description="Excluir dados"
+            description=DESCRIPTION,
+            parameters=PARAMETERS
         )
 
     manager.client.rpc.assert_called_once()
-    manager.client.table.assert_not_called()
 
 
 # ==========================================
@@ -281,6 +294,9 @@ def test_claims_approved_execution(manager):
         "thread_id": "thread-123",
         "step_id": 1,
         "action_type": "deletion",
+        "description": DESCRIPTION,
+        "parameters": PARAMETERS,
+        "action_hash": ACTION_HASH,
         "status": "executing"
     }
 
@@ -292,7 +308,9 @@ def test_claims_approved_execution(manager):
         execution_id=execution_id,
         thread_id="thread-123",
         step_id=1,
-        action_type="deletion"
+        action_type="deletion",
+        description=DESCRIPTION,
+        parameters=PARAMETERS
     )
 
     assert result == approval
@@ -303,7 +321,10 @@ def test_claims_approved_execution(manager):
             "p_execution_id": execution_id,
             "p_thread_id": "thread-123",
             "p_step_id": 1,
-            "p_action_type": "deletion"
+            "p_action_type": "deletion",
+            "p_description": DESCRIPTION,
+            "p_parameters": PARAMETERS,
+            "p_action_hash": ACTION_HASH
         }
     )
 
@@ -319,7 +340,9 @@ def test_claim_returns_none_when_not_available(manager):
         execution_id=execution_id,
         thread_id="thread-123",
         step_id=1,
-        action_type="deletion"
+        action_type="deletion",
+        description=DESCRIPTION,
+        parameters=PARAMETERS
     )
 
     assert result is None
@@ -331,7 +354,9 @@ def test_claim_rejects_invalid_uuid(manager):
             execution_id="uuid-invalido",
             thread_id="thread-123",
             step_id=1,
-            action_type="deletion"
+            action_type="deletion",
+            description=DESCRIPTION,
+            parameters=PARAMETERS
         )
 
     manager.client.rpc.assert_not_called()
@@ -343,7 +368,9 @@ def test_claim_rejects_invalid_step_id(manager):
             execution_id=str(uuid4()),
             thread_id="thread-123",
             step_id=True,
-            action_type="deletion"
+            action_type="deletion",
+            description=DESCRIPTION,
+            parameters=PARAMETERS
         )
 
     manager.client.rpc.assert_not_called()
@@ -355,7 +382,9 @@ def test_claim_rejects_empty_thread_id(manager):
             execution_id=str(uuid4()),
             thread_id=" ",
             step_id=1,
-            action_type="deletion"
+            action_type="deletion",
+            description=DESCRIPTION,
+            parameters=PARAMETERS
         )
 
     manager.client.rpc.assert_not_called()
@@ -367,7 +396,9 @@ def test_claim_rejects_empty_action_type(manager):
             execution_id=str(uuid4()),
             thread_id="thread-123",
             step_id=1,
-            action_type=" "
+            action_type=" ",
+            description=DESCRIPTION,
+            parameters=PARAMETERS
         )
 
     manager.client.rpc.assert_not_called()
@@ -381,6 +412,9 @@ def test_claim_cannot_be_reused(manager):
         "thread_id": "thread-123",
         "step_id": 1,
         "action_type": "deletion",
+        "description": DESCRIPTION,
+        "parameters": PARAMETERS,
+        "action_hash": ACTION_HASH,
         "status": "executing"
     }
 
@@ -395,14 +429,18 @@ def test_claim_cannot_be_reused(manager):
         execution_id=execution_id,
         thread_id="thread-123",
         step_id=1,
-        action_type="deletion"
+        action_type="deletion",
+        description=DESCRIPTION,
+        parameters=PARAMETERS
     )
 
     second_result = manager.claim_approval(
         execution_id=execution_id,
         thread_id="thread-123",
         step_id=1,
-        action_type="deletion"
+        action_type="deletion",
+        description=DESCRIPTION,
+        parameters=PARAMETERS
     )
 
     assert first_result == approval

@@ -9,6 +9,7 @@ from app.config.settings import (
 )
 
 from app.audit.audit_manager import AuditManager
+from app.security.action_integrity import calculate_action_hash
 
 
 class ApprovalManager:
@@ -95,6 +96,16 @@ class ApprovalManager:
         thread_id = thread_id.strip()
         action_type = action_type.strip()
         description = description.strip()
+        parameters = parameters or {}
+
+        action_hash = calculate_action_hash(
+            execution_id=execution_id,
+            thread_id=thread_id,
+            step_id=step_id,
+            action_type=action_type,
+            description=description,
+            parameters=parameters
+        )
 
         result = (
             self.client
@@ -106,7 +117,8 @@ class ApprovalManager:
                     "p_step_id": step_id,
                     "p_action_type": action_type,
                     "p_description": description,
-                    "p_parameters": parameters or {}
+                    "p_action_hash": action_hash,
+                    "p_parameters": parameters
                 }
             )
             .execute()
@@ -208,14 +220,18 @@ class ApprovalManager:
         execution_id,
         thread_id,
         step_id,
-        action_type
+        action_type,
+        description,
+        parameters=None
     ):
         """
         Reserva atomicamente uma aprovação concedida.
 
-        A função PostgreSQL odin_claim_approval_v2 valida
-        os identificadores, atualiza o status para executing
-        e registra o evento de auditoria na mesma transação.
+        Recalcula o HMAC da ação e envia os dados completos
+        para validação pela função PostgreSQL.
+
+        A mudança para executing e a auditoria acontecem
+        na mesma transação do banco.
         """
 
         try:
@@ -244,15 +260,41 @@ class ApprovalManager:
         ):
             raise ValueError("Tipo de ação inválido.")
 
+        if (
+            not isinstance(description, str)
+            or not description.strip()
+        ):
+            raise ValueError("Descrição inválida.")
+
+        if parameters is not None and not isinstance(parameters, dict):
+            raise ValueError("Parâmetros inválidos.")
+
+        thread_id = thread_id.strip()
+        action_type = action_type.strip()
+        description = description.strip()
+        parameters = parameters or {}
+
+        action_hash = calculate_action_hash(
+            execution_id=execution_id,
+            thread_id=thread_id,
+            step_id=step_id,
+            action_type=action_type,
+            description=description,
+            parameters=parameters
+        )
+
         result = (
             self.client
             .rpc(
                 "odin_claim_approval_v2",
                 {
                     "p_execution_id": execution_id,
-                    "p_thread_id": thread_id.strip(),
+                    "p_thread_id": thread_id,
                     "p_step_id": step_id,
-                    "p_action_type": action_type.strip()
+                    "p_action_type": action_type,
+                    "p_description": description,
+                    "p_parameters": parameters,
+                    "p_action_hash": action_hash
                 }
             )
             .execute()

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+import app.approvals.approval_manager as approval_manager_module
 from app.approvals.approval_manager import ApprovalManager
 
 
@@ -27,8 +28,18 @@ def manager():
     return instance
 
 
-def test_audit_approval_requested_is_recorded_by_database(manager):
+def test_audit_approval_requested_is_recorded_by_database(
+    manager,
+    monkeypatch
+):
     execution_id = str(uuid4())
+    expected_hash = "a" * 64
+
+    monkeypatch.setattr(
+        approval_manager_module,
+        "calculate_action_hash",
+        lambda **kwargs: expected_hash
+    )
 
     approval = {
         "execution_id": execution_id,
@@ -58,6 +69,7 @@ def test_audit_approval_requested_is_recorded_by_database(manager):
             "p_step_id": 1,
             "p_action_type": "deletion",
             "p_description": "Excluir dados",
+            "p_action_hash": expected_hash,
             "p_parameters": {}
         }
     )
@@ -131,8 +143,17 @@ def test_audit_approval_rejected_is_recorded_by_database(manager):
     manager.audit_manager.log_event.assert_not_called()
 
 
-def test_request_approval_reports_database_failure(manager):
+def test_request_approval_reports_database_failure(
+    manager,
+    monkeypatch
+):
     execution_id = str(uuid4())
+
+    monkeypatch.setattr(
+        approval_manager_module,
+        "calculate_action_hash",
+        lambda **kwargs: "a" * 64
+    )
 
     manager.client.rpc.return_value.execute.side_effect = RuntimeError(
         "Falha simulada na transação de aprovação e auditoria."

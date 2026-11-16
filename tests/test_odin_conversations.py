@@ -1,67 +1,142 @@
+﻿from unittest.mock import MagicMock
 
-from uuid import uuid4
+import pytest
 
 from app.memory.supabase_memory import OdinMemory
 
 
-def test_odin_conversations():
+@pytest.fixture
+def memory():
+    instance = OdinMemory.__new__(OdinMemory)
+    instance.client = MagicMock()
 
-    print("\nINICIANDO TESTE DE CONVERSAS ODIN...")
+    tables = {
+        "odin_conversations": MagicMock(),
+        "odin_messages": MagicMock()
+    }
 
-    memory = OdinMemory()
+    instance.client.table.side_effect = lambda name: tables[name]
 
-    # Identificador exclusivo para este teste
-    thread_id = f"teste_{uuid4().hex[:12]}"
+    return instance, tables
 
-    # 1. Criar conversa
-    conversation_id = memory.get_or_create_conversation(
-        thread_id=thread_id,
-        title="Teste de memória ODIN"
+
+def test_get_or_create_conversation_creates_new(memory):
+    instance, tables = memory
+    table = tables["odin_conversations"]
+
+    table.select.return_value = table
+    table.eq.return_value = table
+    table.limit.return_value = table
+    table.execute.return_value.data = []
+    table.insert.return_value.execute.return_value.data = [
+        {"id": "conversation-1"}
+    ]
+
+    result = instance.get_or_create_conversation(
+        thread_id="teste-001",
+        title="Teste ODIN"
     )
 
-    assert conversation_id, "ERRO: Conversa não criada."
+    assert result == "conversation-1"
 
-    print("1. CONVERSA CRIADA COM SUCESSO!")
+    table.insert.assert_called_once_with({
+        "thread_id": "teste-001",
+        "status": "active",
+        "title": "Teste ODIN"
+    })
 
-    # 2. Salvar mensagem do Bruno
-    memory.save_message(
-        thread_id=thread_id,
+
+def test_get_or_create_conversation_reuses_existing(memory):
+    instance, tables = memory
+    table = tables["odin_conversations"]
+
+    table.select.return_value = table
+    table.eq.return_value = table
+    table.limit.return_value = table
+    table.execute.return_value.data = [
+        {"id": "conversation-existing"}
+    ]
+
+    result = instance.get_or_create_conversation(
+        thread_id="teste-001"
+    )
+
+    assert result == "conversation-existing"
+    table.insert.assert_not_called()
+
+
+def test_save_message_success(memory):
+    instance, tables = memory
+    conversations = tables["odin_conversations"]
+    messages = tables["odin_messages"]
+
+    conversations.select.return_value = conversations
+    conversations.eq.return_value = conversations
+    conversations.limit.return_value = conversations
+    conversations.execute.return_value.data = [
+        {"id": "conversation-1"}
+    ]
+
+    expected = [{"id": "message-1", "role": "user"}]
+    messages.insert.return_value.execute.return_value.data = expected
+
+    result = instance.save_message(
+        thread_id="teste-001",
         role="user",
-        content="Olá ODIN, vamos testar sua memória."
+        content="Olá ODIN"
     )
 
-    print("2. MENSAGEM DO BRUNO REGISTRADA!")
+    assert result == expected
 
-    # 3. Salvar resposta do ODIN
-    memory.save_message(
-        thread_id=thread_id,
-        role="assistant",
-        content="Olá Bruno! Estou registrando nossa conversa."
-    )
+    messages.insert.assert_called_once_with({
+        "conversation_id": "conversation-1",
+        "role": "user",
+        "content": "Olá ODIN",
+        "metadata": {}
+    })
 
-    print("3. RESPOSTA DO ODIN REGISTRADA!")
 
-    # 4. Recuperar histórico
-    messages = memory.get_messages(
-        thread_id=thread_id,
+def test_get_messages_returns_chronological_order(memory):
+    instance, tables = memory
+    conversations = tables["odin_conversations"]
+    messages = tables["odin_messages"]
+
+    conversations.select.return_value = conversations
+    conversations.eq.return_value = conversations
+    conversations.limit.return_value = conversations
+    conversations.execute.return_value.data = [
+        {"id": "conversation-1"}
+    ]
+
+    messages.select.return_value = messages
+    messages.eq.return_value = messages
+    messages.order.return_value = messages
+    messages.limit.return_value = messages
+
+    messages.execute.return_value.data = [
+        {"id": "message-2", "role": "assistant"},
+        {"id": "message-1", "role": "user"}
+    ]
+
+    result = instance.get_messages(
+        thread_id="teste-001",
         limit=10
     )
 
-    assert len(messages) == 2, (
-        f"ERRO: Esperadas 2 mensagens, encontradas {len(messages)}."
-    )
-
-    assert messages[0]["role"] == "user"
-    assert messages[1]["role"] == "assistant"
-
-    print("4. HISTÓRICO RECUPERADO COM SUCESSO!")
-
-    # 5. Conferir conteúdo
-    for message in messages:
-        print(f'{message["role"].upper()}: {message["content"]}')
-
-    print("\nODIN CONVERSATIONS: TESTE CONCLUÍDO!")
+    assert [message["id"] for message in result] == [
+        "message-1",
+        "message-2"
+    ]
 
 
-if __name__ == "__main__":
-    test_odin_conversations()
+def test_save_message_rejects_invalid_role(memory):
+    instance, tables = memory
+
+    with pytest.raises(ValueError):
+        instance.save_message(
+            thread_id="teste-001",
+            role="system",
+            content="Teste"
+        )
+
+    instance.client.table.assert_not_called()

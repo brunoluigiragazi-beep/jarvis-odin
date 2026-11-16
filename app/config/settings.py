@@ -33,3 +33,5 @@ def get_model_name() -> str:
         "ODIN_MODEL",
         "gpt-4.1-mini"
     ).strip()
+def get_action_integrity_key() -> str:
+    return get_required_env("ODIN_ACTION_INTEGRITY_KEY")

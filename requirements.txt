@@ -1,5 +1,4 @@
-
-langchain==1.5.0
+﻿
 langchain-openai==1.7.4
 langgraph==1.2.20
 openai==3.49.0

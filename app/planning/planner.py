@@ -1,15 +1,11 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from langchain_openai import ChatOpenAI
 
 from app.config.settings import get_model_name
 
-
-# ==========================================
-# ESTRUTURA DO PLANO
-# ==========================================
 
 ActionType = Literal[
     "analysis",
@@ -23,10 +19,19 @@ ActionType = Literal[
 ]
 
 
-class PlanStep(BaseModel):
-    step_id: int = Field(description="Número sequencial da etapa")
+class SecureModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True
+    )
+
+
+class PlanStep(SecureModel):
+    step_id: int = Field(ge=1, description="Número sequencial da etapa")
 
     description: str = Field(
+        min_length=1,
+        max_length=2000,
         description="Descrição objetiva da tarefa"
     )
 
@@ -35,34 +40,59 @@ class PlanStep(BaseModel):
     )
 
     expected_result: str = Field(
+        min_length=1,
+        max_length=2000,
         description="Resultado esperado da etapa"
     )
 
+    @field_validator("step_id", mode="before")
+    @classmethod
+    def validate_step_id(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("step_id deve ser um número inteiro.")
+        return value
 
-class ExecutionPlan(BaseModel):
-    title: str = Field(
-        description="Título do plano"
-    )
+    @field_validator("description", "expected_result")
+    @classmethod
+    def validate_text(cls, value):
+        if not value or not value.strip():
+            raise ValueError("O campo não pode estar vazio.")
+        return value
 
-    objective: str = Field(
-        description="Objetivo principal solicitado por Bruno"
-    )
+
+class ExecutionPlan(SecureModel):
+    title: str = Field(min_length=1, max_length=200)
+
+    objective: str = Field(min_length=1, max_length=2000)
 
     steps: list[PlanStep] = Field(
         min_length=1,
-        max_length=8,
-        description="Etapas necessárias para atingir o objetivo"
+        max_length=8
     )
 
+    @field_validator("title", "objective")
+    @classmethod
+    def validate_plan_text(cls, value):
+        if not value or not value.strip():
+            raise ValueError("O campo não pode estar vazio.")
+        return value
 
-# ==========================================
-# ODIN PLANNER
-# ==========================================
+    @field_validator("steps")
+    @classmethod
+    def validate_step_sequence(cls, steps):
+        step_ids = [step.step_id for step in steps]
+
+        if step_ids != list(range(1, len(steps) + 1)):
+            raise ValueError(
+                "As etapas devem possuir IDs sequenciais começando em 1."
+            )
+
+        return steps
+
 
 class OdinPlanner:
 
     def __init__(self):
-
         self.model = ChatOpenAI(
             model=get_model_name(),
             temperature=0
@@ -80,6 +110,9 @@ class OdinPlanner:
 
         if not isinstance(task, str) or not task.strip():
             raise ValueError("Tarefa inválida.")
+
+        if not isinstance(context, str):
+            raise ValueError("Contexto inválido.")
 
         prompt = f"""
 Você é o ODIN PLANNER.
@@ -100,7 +133,7 @@ REGRAS:
 8. Nunca classifique exclusões, operações financeiras
    ou comunicações externas como simples consultas.
 
-OBJETIVO DE BRUNO:
+OBJETIVO:
 {task}
 
 CONTEXTO DISPONÍVEL:
@@ -109,6 +142,4 @@ CONTEXTO DISPONÍVEL:
 Produza um plano estruturado.
 """
 
-        result = self.planner.invoke(prompt)
-
-        return result
+        return self.planner.invoke(prompt)

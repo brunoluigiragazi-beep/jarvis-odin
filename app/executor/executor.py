@@ -72,6 +72,20 @@ class OdinExecutor:
 
         permission = self.policy.evaluate(action_type)
 
+        # Fail-closed: esta versão do ODIN opera exclusivamente em
+        # modo consultivo. Nenhuma autorização habilita execução real.
+        if not dry_run:
+            return ExecutionResult(
+                execution_id=execution_id,
+                action_type=permission.action_type,
+                status=ExecutionStatus.BLOCKED,
+                message=(
+                    "Modo consultivo ativo. Execução externa bloqueada; "
+                    "nenhuma ferramenta foi chamada."
+                ),
+                executed=False
+            )
+
         if permission.decision == Decision.BLOCKED:
             return ExecutionResult(
                 execution_id=execution_id,

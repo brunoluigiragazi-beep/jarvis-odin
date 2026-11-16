@@ -2,6 +2,7 @@
 import uuid
 
 from app.approvals.approval_manager import ApprovalManager
+from app.security.action_integrity import calculate_action_hash
 
 
 def test_supabase_claim_approval_integration():
@@ -11,11 +12,21 @@ def test_supabase_claim_approval_integration():
     thread_id = f"odin-integration-test-{uuid.uuid4()}"
     step_id = 987654
     action_type = "deletion"
-
-    approval_created = False
+    description = "Teste de integração ODIN"
+    parameters = {"test": True}
 
     try:
-        # 1. Criar aprovação exclusiva de teste.
+        # 1. Calcular a assinatura HMAC da ação.
+        action_hash = calculate_action_hash(
+            execution_id=execution_id,
+            thread_id=thread_id,
+            step_id=step_id,
+            action_type=action_type,
+            description=description,
+            parameters=parameters
+        )
+
+        # 2. Criar aprovação exclusiva de teste.
         created = (
             manager.client
             .table("odin_approvals")
@@ -24,8 +35,9 @@ def test_supabase_claim_approval_integration():
                 "thread_id": thread_id,
                 "step_id": step_id,
                 "action_type": action_type,
-                "description": "Teste de integração ODIN",
-                "parameters": {"test": True},
+                "description": description,
+                "parameters": parameters,
+                "action_hash": action_hash,
                 "status": "approved",
                 "decision_by": "ODIN_TEST"
             })
@@ -33,14 +45,15 @@ def test_supabase_claim_approval_integration():
         )
 
         assert created.data
-        approval_created = True
 
-        # 2. Reivindicar aprovação pela aplicação Python.
+        # 3. Reivindicar aprovação pela aplicação Python.
         claimed = manager.claim_approval(
             execution_id=execution_id,
             thread_id=thread_id,
             step_id=step_id,
-            action_type=action_type
+            action_type=action_type,
+            description=description,
+            parameters=parameters
         )
 
         assert claimed is not None
@@ -48,19 +61,24 @@ def test_supabase_claim_approval_integration():
         assert claimed["thread_id"] == thread_id
         assert claimed["step_id"] == step_id
         assert claimed["action_type"] == action_type
+        assert claimed["description"] == description
+        assert claimed["parameters"] == parameters
         assert claimed["status"] == "executing"
+        assert claimed["action_hash"] == action_hash
 
-        # 3. Tentar reivindicar novamente.
+        # 4. Tentar reivindicar novamente.
         second_claim = manager.claim_approval(
             execution_id=execution_id,
             thread_id=thread_id,
             step_id=step_id,
-            action_type=action_type
+            action_type=action_type,
+            description=description,
+            parameters=parameters
         )
 
         assert second_claim is None
 
-        # 4. Verificar auditoria.
+        # 5. Verificar auditoria.
         audit = (
             manager.client
             .table("odin_audit_logs")
@@ -70,17 +88,25 @@ def test_supabase_claim_approval_integration():
             .execute()
         )
 
-        assert len(audit.data) == 1
+        assert len(audit.data or []) == 1
 
     finally:
-        if approval_created:
-            manager.client.table("odin_audit_logs") \
-                .delete() \
-                .eq("execution_id", execution_id) \
-                .eq("event_type", "approval_claimed") \
+        # 6. Limpar exclusivamente os registros deste teste.
+        # A aprovação é removida mesmo se a limpeza da auditoria falhar.
+        try:
+            (
+                manager.client
+                .table("odin_audit_logs")
+                .delete()
+                .eq("execution_id", execution_id)
+                .eq("event_type", "approval_claimed")
                 .execute()
-
-            manager.client.table("odin_approvals") \
-                .delete() \
-                .eq("execution_id", execution_id) \
+            )
+        finally:
+            (
+                manager.client
+                .table("odin_approvals")
+                .delete()
+                .eq("execution_id", execution_id)
                 .execute()
+            )

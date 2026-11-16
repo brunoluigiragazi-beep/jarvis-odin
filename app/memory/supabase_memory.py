@@ -28,24 +28,80 @@ class OdinMemory:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Conteúdo vazio.")
 
-        if not isinstance(importance, int) or not 1 <= importance <= 5:
+        if not isinstance(category, str) or not category.strip():
+            raise ValueError("Categoria inválida.")
+
+        if (
+            not isinstance(importance, int)
+            or isinstance(importance, bool)
+            or not 1 <= importance <= 5
+        ):
             raise ValueError(
                 "Importância deve estar entre 1 e 5."
             )
 
-        result = self.client.table("odin_memory").insert({
-            "content": content,
-            "category": category,
-            "importance": importance,
-            "source": "jarvis",
-            "is_active": True
-        }).execute()
+        # Verifica se a memória já existe e está ativa.
+        existing = (
+            self.client.table("odin_memory")
+            .select("*")
+            .eq("category", category)
+            .eq("content", content)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
 
-        return result.data
+        if existing.data:
+            return existing.data
+
+        try:
+            result = (
+                self.client.table("odin_memory")
+                .insert({
+                    "content": content,
+                    "category": category,
+                    "importance": importance,
+                    "source": "jarvis",
+                    "is_active": True
+                })
+                .execute()
+            )
+
+            return result.data
+
+        except Exception as error:
+
+            # 23505 = violação de unicidade no PostgreSQL.
+            # Pode ocorrer quando duas gravações simultâneas
+            # tentam registrar a mesma memória.
+            if getattr(error, "code", None) != "23505":
+                raise
+
+            # Recupera a memória que foi inserida primeiro.
+            existing = (
+                self.client.table("odin_memory")
+                .select("*")
+                .eq("category", category)
+                .eq("content", content)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+
+            if existing.data:
+                return existing.data
+
+            # Se não encontrou o conteúdo exato, propaga
+            # o erro em vez de ocultar um possível conflito.
+            raise
 
     def search_memory(self, category=None, limit=10):
 
-        if limit < 1:
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or limit < 1
+        ):
             raise ValueError("Limite inválido.")
 
         query = (
@@ -57,12 +113,13 @@ class OdinMemory:
         if category:
             query = query.eq("category", category)
 
-        return (
+        result = (
             query.order("created_at", desc=True)
             .limit(limit)
             .execute()
-            .data
         )
+
+        return result.data or []
 
     # ==========================================
     # GERENCIAMENTO DE CONVERSAS
@@ -111,6 +168,9 @@ class OdinMemory:
 
     def get_conversation(self, thread_id):
 
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise ValueError("Thread ID inválido.")
+
         result = (
             self.client.table("odin_conversations")
             .select("*")
@@ -132,6 +192,9 @@ class OdinMemory:
         content,
         metadata=None
     ):
+
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise ValueError("Thread ID inválido.")
 
         if role not in ("user", "assistant"):
             raise ValueError("Papel da mensagem inválido.")
@@ -155,7 +218,7 @@ class OdinMemory:
             .execute()
         )
 
-        return result.data
+        return result.data or []
 
     # ==========================================
     # RECUPERACAO DO HISTORICO
@@ -163,7 +226,11 @@ class OdinMemory:
 
     def get_messages(self, thread_id, limit=30):
 
-        if limit < 1:
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or limit < 1
+        ):
             raise ValueError("Limite inválido.")
 
         conversation = self.get_conversation(thread_id)
