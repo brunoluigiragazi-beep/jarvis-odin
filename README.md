@@ -1,10 +1,12 @@
-﻿# JARVIS ODIN
+# JARVIS ODIN
 
 **Assistente pessoal inteligente desenvolvido em Python, LangGraph, LangChain, OpenAI e Supabase.**
 
 O JARVIS ODIN é um projeto de agente inteligente orientado à conversação, planejamento de tarefas, memória persistente e orquestração controlada.
 
 O projeto adota uma arquitetura com separação entre planejamento, política de segurança, integridade de ações, auditoria e execução.
+
+Consulte a [documentação da arquitetura](docs/ARCHITECTURE.md) para visualizar os fluxos e responsabilidades dos componentes.
 
 ## Funcionalidades
 
