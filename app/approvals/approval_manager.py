@@ -2,6 +2,7 @@
 from uuid import UUID
 
 from supabase import create_client
+from postgrest.exceptions import APIError
 
 from app.config.settings import (
     get_supabase_url,
@@ -54,6 +55,10 @@ class ApprovalManager:
                 "ao registrar o evento de auditoria."
             ) from error
 
+    # ==========================================
+    # SOLICITAÇÃO DE APROVAÇÃO
+    # ==========================================
+
     def request_approval(
         self,
         execution_id,
@@ -98,6 +103,8 @@ class ApprovalManager:
         description = description.strip()
         parameters = parameters or {}
 
+        # Calcula a assinatura HMAC da ação.
+
         action_hash = calculate_action_hash(
             execution_id=execution_id,
             thread_id=thread_id,
@@ -107,22 +114,43 @@ class ApprovalManager:
             parameters=parameters
         )
 
-        result = (
-            self.client
-            .rpc(
-                "odin_request_approval_v2",
-                {
-                    "p_execution_id": execution_id,
-                    "p_thread_id": thread_id,
-                    "p_step_id": step_id,
-                    "p_action_type": action_type,
-                    "p_description": description,
-                    "p_action_hash": action_hash,
-                    "p_parameters": parameters
-                }
+        # Solicita aprovação ao Supabase.
+
+        try:
+            result = (
+                self.client
+                .rpc(
+                    "odin_request_approval_v2",
+                    {
+                        "p_execution_id": execution_id,
+                        "p_thread_id": thread_id,
+                        "p_step_id": step_id,
+                        "p_action_type": action_type,
+                        "p_description": description,
+                        "p_action_hash": action_hash,
+                        "p_parameters": parameters
+                    }
+                )
+                .execute()
             )
-            .execute()
-        )
+
+        except APIError as error:
+
+            # PostgreSQL 23505:
+            # violação de restrição UNIQUE.
+            #
+            # A duplicidade continua sendo bloqueada pelo banco.
+            # Aqui apenas convertemos o erro para o formato
+            # esperado pela aplicação.
+
+            if getattr(error, "code", None) == "23505":
+                raise RuntimeError(
+                    "Já existe uma solicitação de aprovação "
+                    "para esta execução."
+                ) from error
+
+            # Não esconder outros erros do Supabase.
+            raise
 
         if not result.data:
             raise RuntimeError(
@@ -130,6 +158,10 @@ class ApprovalManager:
             )
 
         return result.data[0]
+
+    # ==========================================
+    # CONSULTA DE APROVAÇÕES PENDENTES
+    # ==========================================
 
     def get_pending(self, thread_id=None, limit=20):
 
@@ -162,6 +194,10 @@ class ApprovalManager:
         )
 
         return result.data or []
+
+    # ==========================================
+    # APROVAR OU REJEITAR SOLICITAÇÃO
+    # ==========================================
 
     def decide(
         self,
@@ -214,6 +250,10 @@ class ApprovalManager:
             )
 
         return result.data[0]
+
+    # ==========================================
+    # REIVINDICAÇÃO SEGURA DA APROVAÇÃO
+    # ==========================================
 
     def claim_approval(
         self,
@@ -274,6 +314,8 @@ class ApprovalManager:
         description = description.strip()
         parameters = parameters or {}
 
+        # Recalcula a assinatura da ação.
+
         action_hash = calculate_action_hash(
             execution_id=execution_id,
             thread_id=thread_id,
@@ -282,6 +324,8 @@ class ApprovalManager:
             description=description,
             parameters=parameters
         )
+
+        # Reivindica a aprovação atomicamente no banco.
 
         result = (
             self.client

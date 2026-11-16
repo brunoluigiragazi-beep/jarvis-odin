@@ -32,7 +32,7 @@ from app.orchestration.orchestrator import OdinOrchestrator
 # ==========================================
 
 SYSTEM_PROMPT = """
-Você é ODIN, o assistente pessoal JARVIS de Bruno.
+Você é ODIN, o assistente pessoal de Bruno.
 
 IDENTIDADE:
 - Seu criador e usuário principal é Bruno.
@@ -206,7 +206,7 @@ def format_plan_result(result: dict) -> str:
     }
 
     lines = [
-        "JARVIS ODIN — PLANEJAMENTO CONSULTIVO",
+        "ODIN — PLANEJAMENTO CONSULTIVO",
         "",
         f"PLANO: {plan['title']}",
         f"OBJETIVO: {plan['objective']}",
@@ -263,6 +263,8 @@ def format_plan_result(result: dict) -> str:
     ])
 
     return "\n".join(lines)
+
+
 # ==========================================
 # PROCESSAMENTO PRINCIPAL
 # ==========================================
@@ -528,7 +530,7 @@ def load_conversation_history(thread_id: str):
 def run_agent(
     message: str,
     thread_id: str = "bruno"
-):
+) -> str:
 
     if not isinstance(message, str) or not message.strip():
         raise ValueError(
@@ -560,3 +562,39 @@ def run_agent(
             }
         }
     )
+
+    # 4. Recupera as mensagens retornadas pelo LangGraph
+
+    messages = result.get("messages", [])
+
+    # 5. Localiza a última resposta produzida pelo ODIN
+
+    response = next(
+        (
+            item
+            for item in reversed(messages)
+            if isinstance(item, AIMessage)
+        ),
+        None
+    )
+
+    if response is None:
+        raise RuntimeError(
+            "O ODIN não retornou uma resposta da IA."
+        )
+
+    if not isinstance(response.content, str):
+        raise RuntimeError(
+            "A resposta do ODIN está em formato inválido."
+        )
+
+    response_text = response.content.strip()
+
+    if not response_text:
+        raise RuntimeError(
+            "O ODIN retornou uma resposta vazia."
+        )
+
+    # 6. Devolve a resposta ao main.py para exibição no terminal
+
+    return response_text
