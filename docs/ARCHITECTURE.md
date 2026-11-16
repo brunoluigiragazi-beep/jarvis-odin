@@ -1,4 +1,4 @@
-# Arquitetura do JARVIS ODIN
+# Arquitetura do ODIN
 
 Este documento descreve o fluxo implementado no repositório. Ele distingue os componentes disponíveis na arquitetura do comportamento efetivamente habilitado na versão atual.
 
