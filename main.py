@@ -1,9 +1,9 @@
-﻿from app.agents.first_agent import run_agent
+from app.agents.first_agent import run_agent
 
 
 def show_help():
     print("""
-========== JARVIS ODIN ==========
+========== ODIN ==========
 
 /planejar descrição da tarefa
     Cria um planejamento consultivo.
@@ -25,7 +25,7 @@ Execuções externas desativadas.
 
 def main():
     print("=" * 50)
-    print("              JARVIS ODIN")
+    print("              ODIN")
     print("       PERSONAL AI ASSISTANT")
     print("=" * 50)
 
