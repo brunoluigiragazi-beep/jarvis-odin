@@ -94,33 +94,21 @@ class ApprovalManager:
 
         thread_id = thread_id.strip()
         action_type = action_type.strip()
-
-        existing = (
-            self.client
-            .table("odin_approvals")
-            .select("id,status")
-            .eq("execution_id", execution_id)
-            .limit(1)
-            .execute()
-        )
-
-        if existing.data:
-            raise ValueError(
-                "Esta execução já possui uma solicitação de aprovação."
-            )
+        description = description.strip()
 
         result = (
             self.client
-            .table("odin_approvals")
-            .insert({
-                "execution_id": execution_id,
-                "thread_id": thread_id,
-                "step_id": step_id,
-                "action_type": action_type,
-                "description": description.strip(),
-                "parameters": parameters or {},
-                "status": "pending"
-            })
+            .rpc(
+                "odin_request_approval_v2",
+                {
+                    "p_execution_id": execution_id,
+                    "p_thread_id": thread_id,
+                    "p_step_id": step_id,
+                    "p_action_type": action_type,
+                    "p_description": description,
+                    "p_parameters": parameters or {}
+                }
+            )
             .execute()
         )
 
@@ -129,20 +117,7 @@ class ApprovalManager:
                 "Não foi possível registrar a aprovação."
             )
 
-        approval = result.data[0]
-
-        self._record_audit(
-            event_type="approval_requested",
-            execution_id=execution_id,
-            thread_id=thread_id,
-            actor="ODIN",
-            details={
-                "step_id": step_id,
-                "action_type": action_type
-            }
-        )
-
-        return approval
+        return result.data[0]
 
     def get_pending(self, thread_id=None, limit=20):
 

@@ -23,6 +23,8 @@ def manager():
     instance.client.table.return_value = table
     instance.mock_table = table
 
+    instance.audit_manager = MagicMock()
+
     return instance
 
 
@@ -77,10 +79,9 @@ def test_registers_approval_successfully(manager):
         "status": "pending"
     }
 
-    manager.mock_table.execute.side_effect = [
-        MagicMock(data=[]),
-        MagicMock(data=[approval])
-    ]
+    manager.client.rpc.return_value.execute.return_value = MagicMock(
+        data=[approval]
+    )
 
     result = manager.request_approval(
         execution_id=execution_id,
@@ -92,17 +93,30 @@ def test_registers_approval_successfully(manager):
     )
 
     assert result == approval
-    manager.mock_table.insert.assert_called_once()
 
-
-def test_rejects_duplicate_approval(manager):
-    execution_id = str(uuid4())
-
-    manager.mock_table.execute.return_value = MagicMock(
-        data=[{"id": "existing", "status": "pending"}]
+    manager.client.rpc.assert_called_once_with(
+        "odin_request_approval_v2",
+        {
+            "p_execution_id": execution_id,
+            "p_thread_id": "thread-123",
+            "p_step_id": 1,
+            "p_action_type": "deletion",
+            "p_description": "Excluir dados",
+            "p_parameters": {"table": "odin_memory"}
+        }
     )
 
-    with pytest.raises(ValueError):
+    manager.client.table.assert_not_called()
+
+
+def test_duplicate_approval_is_rejected_by_database(manager):
+    execution_id = str(uuid4())
+
+    manager.client.rpc.return_value.execute.side_effect = RuntimeError(
+        "duplicate key value violates unique constraint"
+    )
+
+    with pytest.raises(RuntimeError, match="duplicate key"):
         manager.request_approval(
             execution_id=execution_id,
             thread_id="thread-123",
@@ -111,7 +125,8 @@ def test_rejects_duplicate_approval(manager):
             description="Excluir dados"
         )
 
-    manager.mock_table.insert.assert_not_called()
+    manager.client.rpc.assert_called_once()
+    manager.client.table.assert_not_called()
 
 
 # ==========================================
