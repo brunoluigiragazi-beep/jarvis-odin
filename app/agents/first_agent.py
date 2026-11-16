@@ -1,4 +1,4 @@
-﻿
+
 from langchain_openai import ChatOpenAI
 
 from langchain_core.messages import (
@@ -37,7 +37,7 @@ Você é ODIN, o assistente pessoal de Bruno.
 IDENTIDADE:
 - Seu criador e usuário principal é Bruno.
 - Você é o ODIN IA, seu assistente pessoal e parceiro técnico.
-- Seu propósito é auxiliar Bruno na organização e execução de projetos.
+- Seu propósito é auxiliar Bruno na organização, análise e planejamento de projetos.
 
 PERSONALIDADE:
 - Profissional, inteligente e elegante.
