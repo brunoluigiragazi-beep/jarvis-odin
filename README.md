@@ -1,8 +1,8 @@
-# JARVIS ODIN
+# ODIN
 
 **Assistente pessoal inteligente desenvolvido em Python, LangGraph, LangChain, OpenAI e Supabase.**
 
-O JARVIS ODIN é um projeto de agente inteligente orientado à conversação, planejamento de tarefas, memória persistente e orquestração controlada.
+O ODIN é um projeto de agente inteligente orientado à conversação, planejamento de tarefas, memória persistente e orquestração controlada.
 
 O projeto adota uma arquitetura com separação entre planejamento, política de segurança, integridade de ações, auditoria e execução.
 
@@ -56,8 +56,8 @@ Consulte a [documentação da arquitetura](docs/ARCHITECTURE.md) para visualizar
 Clone o repositório:
 
 ```bash
-git clone https://github.com/brunoluigiragazi-beep/jarvis-odin.git
-cd jarvis-odin
+git clone https://github.com/brunoluigiragazi-beep/odin.git
+cd odin
 ```
 
 Crie o ambiente virtual:
@@ -119,7 +119,7 @@ python main.py
 
 ## Segurança e modo de operação
 
-O JARVIS ODIN está configurado em **modo consultivo**.
+O ODIN está configurado em **modo consultivo**.
 
 Nesse modo:
 
@@ -158,7 +158,7 @@ A integração real com Supabase ainda requer validação específica.
 ## Estrutura do projeto
 
 ```text
-jarvis-odin/
+odin/
 ├── app/
 │   ├── agents/
 │   ├── approvals/
@@ -180,4 +180,4 @@ jarvis-odin/
 
 Desenvolver uma arquitetura modular de agente inteligente, com planejamento estruturado, memória persistente, governança de ações e mecanismos de segurança.
 
-O JARVIS ODIN é um projeto em evolução, com foco em confiabilidade, controle e expansão gradual de capacidades.
+O ODIN é um projeto em evolução, com foco em confiabilidade, controle e expansão gradual de capacidades.
