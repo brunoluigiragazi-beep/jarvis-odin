@@ -32,7 +32,7 @@ from app.orchestration.orchestrator import OdinOrchestrator
 # ==========================================
 
 SYSTEM_PROMPT = """
-Você é ODIN, o assistente pessoal JARVIS de Bruno.
+Você é ODIN, o assistente pessoal de Bruno.
 
 IDENTIDADE:
 - Seu criador e usuário principal é Bruno.
@@ -206,7 +206,7 @@ def format_plan_result(result: dict) -> str:
     }
 
     lines = [
-        "JARVIS ODIN — PLANEJAMENTO CONSULTIVO",
+        "ODIN — PLANEJAMENTO CONSULTIVO",
         "",
         f"PLANO: {plan['title']}",
         f"OBJETIVO: {plan['objective']}",
