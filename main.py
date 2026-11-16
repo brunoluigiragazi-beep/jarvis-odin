@@ -1,4 +1,4 @@
-﻿from app.agents.first_agent import run_agent
+from app.agents.first_agent import run_agent
 
 
 def show_help():
